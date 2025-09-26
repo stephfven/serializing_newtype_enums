@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -9,18 +9,68 @@ pub struct DeviceAttributes {
 }
 
 pub mod types {
-    use super::{Deserialize, Serialize};
+    use super::*;
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct Voltage(#[serde(rename = "$text")] pub f32);
-
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
-    pub struct Power(#[serde(rename = "$text")] pub f32);
-
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq, Serialize)]
+    #[serde(rename_all = "PascalCase")]
     pub enum ControlType {
-        Voltage(#[serde(rename = "$text")] Voltage),
-        Power(#[serde(rename = "$text")] Power),
+        Voltage(f32),
+        Power(f32),
+    }
+
+    impl<'de> Deserialize<'de> for ControlType {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            use serde::de::{self, MapAccess, Visitor};
+            use std::fmt;
+
+            // This matches either:
+            //  - directly "3.5"
+            //  - or { "$text": "3.5" }
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum TextOrMap {
+                Text(String),
+                Map {
+                    #[serde(rename = "$text")]
+                    text: String,
+                },
+            }
+
+            struct ControlVisitor;
+
+            impl<'de> Visitor<'de> for ControlVisitor {
+                type Value = ControlType;
+
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("Power or Voltage element")
+                }
+
+                fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+                where
+                    M: MapAccess<'de>,
+                {
+                    while let Some((key, tom)) = map.next_entry::<String, TextOrMap>()? {
+                        // Extract the string content
+                        let s = match tom {
+                            TextOrMap::Text(t) => t,
+                            TextOrMap::Map { text } => text,
+                        };
+                        let f = s.parse::<f32>().map_err(de::Error::custom)?;
+                        return match key.as_str() {
+                            "Power" => Ok(ControlType::Power(f)),
+                            "Voltage" => Ok(ControlType::Voltage(f)),
+                            _ => Err(de::Error::custom(format!("unexpected key {}", key))),
+                        };
+                    }
+                    Err(de::Error::custom("expected <Power> or <Voltage> element"))
+                }
+            }
+
+            deserializer.deserialize_map(ControlVisitor)
+        }
     }
 }
 
@@ -59,53 +109,58 @@ pub mod xml {
 
 #[cfg(test)]
 pub mod tests {
-    #[allow(dead_code)]
     use std::path::PathBuf;
 
     use super::{
         DeviceAttributes,
-        types::{ControlType, Power, Voltage},
+        types::ControlType,
         xml::{from_xml_file, to_xml_file},
     };
 
-    // Currently passes
     #[test]
     fn export() {
         let file_path = PathBuf::from("export.xml");
         let out = DeviceAttributes {
             name: "MyDevice".to_string(),
-            ctrl_type: ControlType::Voltage(Voltage(2.5)),
+            ctrl_type: ControlType::Power(3.5),
         };
 
-        // Should export as the following:
-        //      <DeviceTag>
-        //          <Name>MyDevice</Name>
-        //          <Voltage>2.5</Voltage>
-        //      </DeviceTag>
-        // Where `ControlType` is flattened to either a `<Voltage>X</Voltage>`
-        // or `<Voltage>2.5</Voltage>` element, without being encapsulated by an
-        // outer `<ControlType>` tag.
-
+        // <DeviceTag>
+        //   <Name>MyDevice</Name>
+        //   <Power>3.5</Power>
+        // </DeviceTag>
         to_xml_file(&file_path, &out).expect("should have written object to file");
     }
 
-    // Currently fails with error output:
-    // should have read object into memory: "failed to deserialize: \"invalid type: map, expected f32\""
     #[test]
     fn import() {
         let file_path = PathBuf::from("import.xml");
         let out = DeviceAttributes {
             name: "MyDevice".to_string(),
-            ctrl_type: ControlType::Power(Power(3.2)),
+            ctrl_type: ControlType::Power(3.5),
         };
 
-        // Should be able to read an XML file that looks something like:
-        //      <DeviceTag>
-        //          <Name>MyDevice</Name>
-        //          <Power>3.2</Power>
-        //      </DeviceTag>
-        // Where the `<Power>` tag is deserialized as `ControlType::Power`
+        // Must have an XML file at import.xml exactly like:
+        // <DeviceTag>
+        //     <Name>MyDevice</Name>
+        //     <Power>3.5</Power>
+        // </DeviceTag>
+        let res = from_xml_file(&file_path).expect("should have read object into memory");
+        assert_eq!(res, out, "imported object does not match original");
+    }
 
+    #[test]
+    fn export_and_import() {
+        let file_path = PathBuf::from("test.xml");
+        let out = DeviceAttributes {
+            name: "OtherDeviceTest".to_string(),
+            ctrl_type: ControlType::Voltage(2.0),
+        };
+
+        // Export
+        to_xml_file(&file_path, &out).expect("should have written object to file");
+
+        // Import
         let res = from_xml_file(&file_path).expect("should have read object into memory");
         assert_eq!(res, out, "imported object does not match original");
     }

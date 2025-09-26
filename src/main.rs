@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::newtype_variant_enum::{
     DeviceAttributes,
-    types::{ControlType, Voltage},
+    types::ControlType,
     xml::{from_xml_file, to_xml_file},
 };
 
@@ -13,7 +13,7 @@ fn main() {
     let file_path = PathBuf::from("test.xml");
     let obj = DeviceAttributes {
         name: "OtherDeviceTest".to_string(),
-        ctrl_type: ControlType::Voltage(Voltage(2.0)),
+        ctrl_type: ControlType::Voltage(2.0),
     };
 
     println!("\n\n[Original] {}, {:?}", obj.name, obj.ctrl_type);
