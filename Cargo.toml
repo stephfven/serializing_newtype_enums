@@ -1,0 +1,9 @@
+[package]
+name = "newtype_enum_variant"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+derive_more = { version = "2.0.1", features = ["from", "display"] }
+quick-xml = { version = "0.38.2", features = ["serialize"] }
+serde = { version = "1.0.219", features = ["derive"] }
